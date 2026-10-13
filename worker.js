@@ -1,7 +1,10 @@
 // BioForge room relay — runs on Cloudflare as a Worker + Durable Object.
 // One Durable Object instance per room code. It receives the game's
 // multiplayer messages over WebSocket and forwards each one to everyone
-// else in the room. No game logic lives here — the game stays in charge.
+// else in the room. It also watches for dropped connections: if a player
+// vanishes without a goodbye (reload, crash, lost signal), the relay
+// announces their departure itself so no ghost player lingers in the room.
+// No other game logic lives here — the game stays in charge.
 
 export class BioForgeRoom {
   constructor(ctx, env) {
@@ -22,6 +25,8 @@ export class BioForgeRoom {
   }
 
   async webSocketMessage(ws, message) {
+    this.trackPresence(ws, message);
+
     // Forward to everyone else in the room. The sender already applied
     // the message locally, so it never gets its own message back.
     for (const peer of this.ctx.getWebSockets()) {
@@ -34,12 +39,68 @@ export class BioForgeRoom {
     }
   }
 
+  // Remember who each connection belongs to, from its join announcement.
+  // Stored as a socket attachment so it survives hibernation.
+  trackPresence(ws, message) {
+    if (typeof message !== 'string') return;
+    let msg;
+    try {
+      msg = JSON.parse(message);
+    } catch (e) {
+      return;
+    }
+    if (msg.type === 'peer_join' && msg.senderId) {
+      if (ws.deserializeAttachment()) return;
+      ws.serializeAttachment({
+        senderId: msg.senderId,
+        senderName: msg.senderName || 'Explorer',
+        roomCode: msg.roomCode || '',
+        departed: false,
+      });
+      return;
+    }
+    if (msg.type === 'peer_leave') {
+      // The player said goodbye properly — no need to announce it again
+      // when their socket closes a moment later.
+      const identity = ws.deserializeAttachment();
+      if (!identity) return;
+      identity.departed = true;
+      ws.serializeAttachment(identity);
+    }
+  }
+
+  announceDeparture(ws) {
+    const identity = ws.deserializeAttachment();
+    if (!identity || !identity.senderId || identity.departed) return;
+    identity.departed = true;
+    ws.serializeAttachment(identity);
+
+    const leave = JSON.stringify({
+      type: 'peer_leave',
+      id: 'relay_' + Math.random().toString(36).substring(2, 10),
+      senderId: identity.senderId,
+      senderName: identity.senderName,
+      senderColor: '#38bdf8',
+      roomCode: identity.roomCode,
+      payload: { peerId: identity.senderId },
+      timestamp: Date.now(),
+    });
+    for (const peer of this.ctx.getWebSockets()) {
+      if (peer === ws) continue;
+      try {
+        peer.send(leave);
+      } catch (e) {
+        // Socket is closing — nothing to do.
+      }
+    }
+  }
+
   async webSocketClose(ws) {
-    // The hibernation API tracks sockets for us; nothing to clean up.
+    this.announceDeparture(ws);
   }
 
   async webSocketError(ws, error) {
-    // Errors surface as a close right after; nothing to do.
+    this.announceDeparture(ws);
   }
 }
 
