@@ -11,4 +11,4 @@ deploy command: npx wrangler deploy).
   and migration live here; the Cloudflare dashboard cannot create them,
   which is why this repo is deployed from Git.
 
-Status: relay deployed via Cloudflare Workers Builds; game client wiring is the next step.
+Status: relay deployed via Cloudflare Workers Builds; game client wiring is the next step once the build is green.
