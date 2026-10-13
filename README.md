@@ -10,3 +10,5 @@ deploy command: npx wrangler deploy).
 - wrangler.toml — worker config. The Durable Object binding (ROOMS)
   and migration live here; the Cloudflare dashboard cannot create them,
   which is why this repo is deployed from Git.
+
+Status: relay deployed via Cloudflare Workers Builds; game client wiring is the next step.
